@@ -39,7 +39,7 @@ async function ensureSessionFile() {
 
     console.log("🔄 creds.json not found. Downloading session from MEGA...");
 
-    const sessdata = config.SESSION_ID;
+    const sessdata = config.SESSION_ID.replace("THENUVA-XMD=", '');
     const filer = File.fromURL(`https://mega.nz/file/${sessdata}`);
 
     filer.download((err, data) => {
