@@ -32,7 +32,6 @@ let isConnecting = false;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 let pluginsLoaded = false;
-
 let activeSocket = null;
 
 // =====================================
@@ -41,6 +40,8 @@ let activeSocket = null;
 
 async function ensureSessionFile() {
   try {
+    fs.mkdirSync(authFolder, { recursive: true });
+
     if (!fs.existsSync(credsPath)) {
 
       if (!config.SESSION_ID) {
@@ -50,7 +51,7 @@ async function ensureSessionFile() {
 
       console.log('🔄 Downloading DANUWA-MD Session...');
 
-      const sessdata = config.SESSION_ID;
+      const sessdata = config.SESSION_ID.replace('THENUVA-XMD=', '');
 
       const filer = File.fromURL(
         `https://mega.nz/file/${sessdata}`
@@ -62,12 +63,14 @@ async function ensureSessionFile() {
           process.exit(1);
         }
 
-        fs.mkdirSync(authFolder, { recursive: true });
-        fs.writeFileSync(credsPath, data);
-
-        console.log('✅ Session Downloaded Successfully!');
-
-        connectToWA();
+        try {
+          fs.writeFileSync(credsPath, data);
+          console.log('✅ Session Downloaded Successfully!');
+          connectToWA();
+        } catch (error) {
+          console.error('❌ Session Save Error:', error);
+          process.exit(1);
+        }
       });
 
     } else {
@@ -126,9 +129,7 @@ function scheduleReconnect() {
 
   reconnectAttempts++;
 
-  console.log(
-    `🔄 Reconnecting in ${delay / 1000} seconds...`
-  );
+  console.log(`🔄 Reconnecting in ${delay / 1000} seconds...`);
 
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
@@ -153,11 +154,17 @@ async function connectToWA() {
     const { state, saveCreds } =
       await useMultiFileAuthState(authFolder);
 
-    const { version } = await fetchLatestBaileysVersion();
+    console.log('🔐 Session state loaded.');
+
+    const { version, isLatest } =
+      await fetchLatestBaileysVersion();
+
+    console.log('📦 Baileys Version:', version);
+    console.log('📦 Latest Version:', isLatest);
 
     const danuwa = makeWASocket({
 
-      logger: P({ level: 'silent' }),
+      logger: P({ level: 'debug' }),
 
       printQRInTerminal: false,
 
@@ -183,10 +190,14 @@ async function connectToWA() {
 
     danuwa.ev.on('connection.update', async (update) => {
 
-      const { connection, lastDisconnect } = update;
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        console.log('⚠️ QR received. This session may need pairing.');
+      }
 
       if (connection === 'connecting') {
-        console.log('⏳ DANUWA-MD Connecting...');
+        console.log('⏳ DANUWA-MD Connecting to WhatsApp...');
       }
 
       if (connection === 'close') {
@@ -208,10 +219,8 @@ async function connectToWA() {
         }
 
         if (statusCode === DisconnectReason.loggedOut) {
-
           console.log('❌ WhatsApp Logged Out!');
           console.log('⚠️ A new session is required.');
-
           return;
         }
 
@@ -233,14 +242,12 @@ async function connectToWA() {
         console.log('✅ WhatsApp Connection Successful');
         console.log('================================');
 
-        // OWNER NOTIFICATION
-
         const up = `╭━━━〔 DANUWA-MD 〕━━━┈⊷
 ┃
-┃  🟢 BOT CONNECTED
+┃ 🟢 BOT CONNECTED
 ┃
-┃  PREFIX : ${prefix}
-┃  STATUS : ONLINE
+┃ PREFIX : ${prefix}
+┃ STATUS : ONLINE
 ┃
 ╰━━━━━━━━━━━━━━━━━━┈⊷`;
 
@@ -255,8 +262,6 @@ async function connectToWA() {
         ).catch(error => {
           console.log('⚠️ Owner Notification Failed:', error.message);
         });
-
-        // LOAD PLUGINS
 
         loadPlugins();
       }
@@ -292,9 +297,7 @@ async function connectToWA() {
       if (mek.key.remoteJid === 'status@broadcast') return;
 
       const m = sms(danuwa, mek);
-
       const type = getContentType(mek.message);
-
       const from = mek.key.remoteJid;
 
       const body =
@@ -311,7 +314,6 @@ async function connectToWA() {
         : '';
 
       const args = body.trim().split(/ +/).slice(1);
-
       const q = args.join(' ');
 
       const sender = mek.key.fromMe
@@ -319,10 +321,10 @@ async function connectToWA() {
         : (mek.key.participant || mek.key.remoteJid);
 
       const senderNumber = sender.split('@')[0].split(':')[0];
-
       const isGroup = from.endsWith('@g.us');
 
-      const botNumber = danuwa.user.id.split(':')[0].split('@')[0];
+      const botNumber =
+        danuwa.user.id.split(':')[0].split('@')[0];
 
       const pushname = mek.pushName || 'User';
 
