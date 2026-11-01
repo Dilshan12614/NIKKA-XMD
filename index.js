@@ -51,7 +51,7 @@ async function ensureSessionFile() {
 
       console.log('🔄 Downloading DANUWA-MD Session...');
 
-      const sessdata = config.SESSION_ID.replace('THENUVA-XMD=', '');
+      const sessdata = config.SESSION_ID;
 
       const filer = File.fromURL(
         `https://mega.nz/file/${sessdata}`
