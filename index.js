@@ -5,7 +5,7 @@ const {
     jidNormalizedUser,
     getContentType,
     fetchLatestBaileysVersion,
-    Browsers
+    Browsers,
     downloadMediaMessage,
 } = require('@whiskeysockets/baileys');
 
