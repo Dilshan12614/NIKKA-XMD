@@ -20,13 +20,26 @@ const config = require('./config');
 const { sms } = require('./lib/msg');
 const { getGroupAdmins } = require('./lib/functions');
 const { commands, replyHandlers } = require('./command');
+const { getSettings } = require('./lib/botsettings');
 
 const app = express();
 const port = process.env.PORT || 8000;
 const prefix = '.';
 
-const ownerNumber = String(config.BOT_OWNER || '94772194789')
+// =====================================
+// OWNER CONFIGURATION
+// =====================================
+
+let ownerNumber = String(config.BOT_OWNER || '94772194789')
     .replace(/\D/g, '');
+
+if (ownerNumber.startsWith('0')) {
+    ownerNumber = '94' + ownerNumber.slice(1);
+}
+
+// =====================================
+// PATHS
+// =====================================
 
 const authFolder = path.join(__dirname, 'auth_info_baileys');
 const credsPath = path.join(authFolder, 'creds.json');
@@ -122,8 +135,10 @@ function getMegaUrl() {
         sessionId = sessionId.substring(sessionId.indexOf('~') + 1);
     }
 
-    if (sessionId.startsWith('https://') ||
-        sessionId.startsWith('http://')) {
+    if (
+        sessionId.startsWith('https://') ||
+        sessionId.startsWith('http://')
+    ) {
         return sessionId;
     }
 
@@ -146,7 +161,9 @@ function downloadMegaFile(url) {
                     if (downloadError) return reject(downloadError);
 
                     if (!buffer || !buffer.length) {
-                        return reject(new Error('Downloaded MEGA file is empty!'));
+                        return reject(
+                            new Error('Downloaded MEGA file is empty!')
+                        );
                     }
 
                     resolve(buffer);
@@ -175,8 +192,10 @@ function extractSessionZip(buffer) {
     for (const entry of entries) {
         const target = path.resolve(authFolder, entry.entryName);
 
-        if (target !== authFolder &&
-            !target.startsWith(authFolder + path.sep)) {
+        if (
+            target !== authFolder &&
+            !target.startsWith(authFolder + path.sep)
+        ) {
             throw new Error('Invalid path inside session ZIP!');
         }
     }
@@ -184,7 +203,9 @@ function extractSessionZip(buffer) {
     zip.extractAllTo(authFolder, true);
 
     if (!fs.existsSync(credsPath)) {
-        throw new Error('creds.json not found after extracting session ZIP!');
+        throw new Error(
+            'creds.json not found after extracting session ZIP!'
+        );
     }
 
     const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
@@ -204,7 +225,10 @@ function hasValidSession() {
     try {
         if (!fs.existsSync(credsPath)) return false;
 
-        const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+        const creds = JSON.parse(
+            fs.readFileSync(credsPath, 'utf8')
+        );
+
         return creds.registered === true;
     } catch {
         return false;
@@ -254,7 +278,9 @@ function scheduleReconnect() {
 
     reconnectAttempts++;
 
-    console.log(`🔄 Reconnecting in ${delayTime / 1000} seconds...`);
+    console.log(
+        `🔄 Reconnecting in ${delayTime / 1000} seconds...`
+    );
 
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
@@ -290,7 +316,9 @@ async function handleAntiDelete(nikka, updates) {
             const original = getAntiDeleteMessage(deletedKey);
 
             if (!original) {
-                console.log('⚠️ AntiDelete: Original message not cached.');
+                console.log(
+                    '⚠️ AntiDelete: Original message not cached.'
+                );
                 continue;
             }
 
@@ -321,13 +349,15 @@ async function handleAntiDelete(nikka, updates) {
 
             const mentions = { mentions: [sender] };
 
-            // Skip view-once content
+            // Skip view-once messages
             if (
                 content.viewOnceMessage ||
                 content.viewOnceMessageV2 ||
                 content.viewOnceMessageV2Extension
             ) {
-                console.log('ℹ️ AntiDelete: View-once message skipped.');
+                console.log(
+                    'ℹ️ AntiDelete: View-once message skipped.'
+                );
                 continue;
             }
 
@@ -352,7 +382,9 @@ async function handleAntiDelete(nikka, updates) {
                 );
 
                 if (!buffer?.length) {
-                    throw new Error('Media download returned empty buffer');
+                    throw new Error(
+                        'Media download returned empty buffer'
+                    );
                 }
 
                 const media = content[type];
@@ -391,7 +423,9 @@ async function handleAntiDelete(nikka, updates) {
                     case 'documentMessage':
                         output = {
                             document: buffer,
-                            mimetype: media.mimetype || 'application/octet-stream',
+                            mimetype:
+                                media.mimetype ||
+                                'application/octet-stream',
                             fileName: media.fileName || 'deleted-file',
                             caption: header + (media.caption || ''),
                             ...mentions
@@ -430,10 +464,15 @@ async function handleAntiDelete(nikka, updates) {
                 });
             }
 
-            console.log(`✅ AntiDelete recovered: ${deletedKey.id}`);
+            console.log(
+                `✅ AntiDelete recovered: ${deletedKey.id}`
+            );
 
         } catch (error) {
-            console.error('[ANTIDELETE RECOVERY ERROR]', error);
+            console.error(
+                '[ANTIDELETE RECOVERY ERROR]',
+                error
+            );
         }
     }
 }
@@ -475,11 +514,16 @@ async function connectToWA() {
 
         activeSocket = nikka;
 
+        // =====================================
         // CONNECTION UPDATE
+        // =====================================
+
         nikka.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
 
-            if (qr) console.log('⚠️ QR received.');
+            if (qr) {
+                console.log('⚠️ QR received.');
+            }
 
             if (connection === 'connecting') {
                 console.log('⏳ DANUWA-MD Connecting...');
@@ -494,7 +538,9 @@ async function connectToWA() {
                 console.log('❌ WhatsApp Connection Closed!');
                 console.log('Status Code:', statusCode);
 
-                if (activeSocket === nikka) activeSocket = null;
+                if (activeSocket === nikka) {
+                    activeSocket = null;
+                }
 
                 if (
                     statusCode === DisconnectReason.loggedOut ||
@@ -535,8 +581,26 @@ async function connectToWA() {
                             caption: up
                         }
                     ).catch(error => {
-                        console.log('⚠️ Owner Notification Failed:', error.message);
+                        console.log(
+                            '⚠️ Owner Notification Failed:',
+                            error.message
+                        );
                     });
+                }
+
+                // ALWAYS ONLINE
+                const botSettings = getSettings();
+
+                if (botSettings.alwaysonline) {
+                    try {
+                        await nikka.sendPresenceUpdate('available');
+                        console.log('🟢 Always Online Enabled');
+                    } catch (error) {
+                        console.error(
+                            '[ALWAYS ONLINE ERROR]',
+                            error
+                        );
+                    }
                 }
 
                 loadPlugins();
@@ -551,9 +615,13 @@ async function connectToWA() {
             await handleAntiDelete(nikka, updates);
         });
 
+        // =====================================
         // MESSAGE HANDLER
+        // =====================================
+
         nikka.ev.on('messages.upsert', async ({ messages }) => {
 
+            // Cache incoming messages
             for (const msg of messages) {
                 cacheAntiDeleteMessage(msg);
 
@@ -577,6 +645,33 @@ async function connectToWA() {
                 const type = getContentType(mek.message);
                 const from = mek.key.remoteJid;
 
+                // =====================================
+                // AUTO RECORDING / AUTO TYPING
+                // =====================================
+
+                if (!mek.key.fromMe) {
+                    const currentSettings = getSettings();
+
+                    try {
+                        if (currentSettings.autorecord) {
+                            await nikka.sendPresenceUpdate(
+                                'recording',
+                                from
+                            );
+                        } else if (currentSettings.autotyping) {
+                            await nikka.sendPresenceUpdate(
+                                'composing',
+                                from
+                            );
+                        }
+                    } catch (error) {
+                        console.error(
+                            '[AUTO PRESENCE ERROR]',
+                            error
+                        );
+                    }
+                }
+
                 const body =
                     type === 'conversation'
                         ? mek.message.conversation
@@ -587,7 +682,10 @@ async function connectToWA() {
                 const isCmd = body.startsWith(prefix);
 
                 const commandName = isCmd
-                    ? body.slice(prefix.length).trim().split(' ')[0].toLowerCase()
+                    ? body.slice(prefix.length)
+                        .trim()
+                        .split(' ')[0]
+                        .toLowerCase()
                     : '';
 
                 const args = body.trim().split(/ +/).slice(1);
@@ -597,22 +695,35 @@ async function connectToWA() {
                     ? nikka.user.id
                     : (mek.key.participant || mek.key.remoteJid);
 
-                const senderNumber = sender.split('@')[0].split(':')[0];
+                const senderNumber = sender
+                    .split('@')[0]
+                    .split(':')[0];
 
                 const isGroup = from.endsWith('@g.us');
-                const botNumber = nikka.user.id.split(':')[0].split('@')[0];
+
+                const botNumber = nikka.user.id
+                    .split(':')[0]
+                    .split('@')[0];
 
                 const pushname = mek.pushName || 'User';
-                const isMe = botNumber === senderNumber;
-                const isOwner = ownerNumber === senderNumber || isMe;
 
-                const botNumber2 = await jidNormalizedUser(nikka.user.id);
+                const isMe = botNumber === senderNumber;
+
+                const isOwner =
+                    ownerNumber === senderNumber || isMe;
+
+                const botNumber2 = await jidNormalizedUser(
+                    nikka.user.id
+                );
 
                 const groupMetadata = isGroup
                     ? await nikka.groupMetadata(from).catch(() => null)
                     : null;
 
-                const groupName = isGroup ? groupMetadata?.subject || '' : '';
+                const groupName = isGroup
+                    ? groupMetadata?.subject || ''
+                    : '';
+
                 const participants = isGroup
                     ? groupMetadata?.participants || []
                     : [];
@@ -635,7 +746,10 @@ async function connectToWA() {
                     { quoted: mek }
                 );
 
+                // =====================================
                 // COMMAND HANDLER
+                // =====================================
+
                 if (isCmd) {
                     const cmd = commands.find((c) =>
                         c.pattern === commandName ||
@@ -684,12 +798,17 @@ async function connectToWA() {
                             );
                         } catch (error) {
                             console.error('[PLUGIN ERROR]', error);
-                            await reply('❌ Command Error: ' + error.message);
+                            await reply(
+                                '❌ Command Error: ' + error.message
+                            );
                         }
                     }
                 }
 
+                // =====================================
                 // REPLY HANDLERS
+                // =====================================
+
                 for (const handler of replyHandlers) {
                     if (
                         handler.filter(body, {
@@ -713,7 +832,10 @@ async function connectToWA() {
 
                             break;
                         } catch (error) {
-                            console.log('Reply Handler Error:', error);
+                            console.log(
+                                'Reply Handler Error:',
+                                error
+                            );
                         }
                     }
                 }
@@ -722,7 +844,10 @@ async function connectToWA() {
 
     } catch (error) {
         isConnecting = false;
-        console.error('❌ DANUWA-MD Connection Error:', error);
+        console.error(
+            '❌ DANUWA-MD Connection Error:',
+            error
+        );
         scheduleReconnect();
     }
 }
@@ -736,7 +861,9 @@ app.get('/', (req, res) => {
 });
 
 app.listen(port, () => {
-    console.log(`🌐 DANUWA-MD Server listening on port ${port}`);
+    console.log(
+        `🌐 DANUWA-MD Server listening on port ${port}`
+    );
 });
 
 // =====================================
