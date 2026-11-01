@@ -25,7 +25,7 @@ const port = process.env.PORT || 8000;
 
 const prefix = '.';
 
-// මෙතැන ඔයාගේ දැනට භාවිත කරන Owner number එක දාන්න.
+// ඔබේ Owner number එක මෙතැන දාන්න.
 const ownerNumber = ['94772194789'];
 
 const authFolder = path.join(__dirname, 'auth_info_baileys');
@@ -39,7 +39,7 @@ let activeSocket = null;
 
 
 // =====================================
-// MEGA SESSION DOWNLOAD
+// SESSION ID / MEGA URL
 // =====================================
 
 function getMegaUrl() {
@@ -49,21 +49,30 @@ function getMegaUrl() {
 
   let sessionId = String(config.SESSION_ID).trim();
 
-  // Remove website prefix, e.g. DENETH-MD~
-  if (!sessionId.startsWith('https://') &&
-      !sessionId.startsWith('http://')) {
-    if (sessionId.includes('~')) {
-      sessionId = sessionId.substring(
-        sessionId.indexOf('~') + 1
-      );
-    }
+  // Remove THENUVA-XMD= prefix
+  sessionId = sessionId.replace(/^THENUVA-XMD=/i, '');
 
-    return `https://mega.nz/file/${sessionId}`;
+  // Remove old session prefixes if present
+  if (sessionId.includes('~')) {
+    sessionId = sessionId.substring(
+      sessionId.indexOf('~') + 1
+    );
   }
 
-  return sessionId;
+  if (
+    sessionId.startsWith('https://') ||
+    sessionId.startsWith('http://')
+  ) {
+    return sessionId;
+  }
+
+  return `https://mega.nz/file/${sessionId}`;
 }
 
+
+// =====================================
+// MEGA DOWNLOAD
+// =====================================
 
 function downloadMegaFile(url) {
   return new Promise((resolve, reject) => {
@@ -98,7 +107,7 @@ function downloadMegaFile(url) {
 
 
 // =====================================
-// ZIP EXTRACTION
+// EXTRACT SESSION ZIP
 // =====================================
 
 function extractSessionZip(buffer) {
@@ -111,7 +120,7 @@ function extractSessionZip(buffer) {
     throw new Error('Session ZIP is empty!');
   }
 
-  // Prevent unsafe ZIP paths.
+  // Prevent unsafe paths inside ZIP
   for (const entry of entries) {
     const target = path.resolve(
       authFolder,
@@ -134,7 +143,6 @@ function extractSessionZip(buffer) {
     );
   }
 
-  // Check whether creds.json contains valid JSON.
   const creds = JSON.parse(
     fs.readFileSync(credsPath, 'utf8')
   );
@@ -151,7 +159,7 @@ function extractSessionZip(buffer) {
 
 
 // =====================================
-// SESSION CHECK
+// CHECK SESSION
 // =====================================
 
 function hasValidSession() {
@@ -173,7 +181,7 @@ function hasValidSession() {
 
 
 // =====================================
-// DOWNLOAD AND PREPARE SESSION
+// DOWNLOAD SESSION
 // =====================================
 
 async function ensureSessionFile() {
@@ -181,7 +189,6 @@ async function ensureSessionFile() {
     if (!hasValidSession()) {
       console.log('🔄 Downloading NIKKA X MD Session...');
 
-      // Remove previous invalid ZIP-as-creds file.
       fs.rmSync(authFolder, {
         recursive: true,
         force: true
@@ -193,7 +200,7 @@ async function ensureSessionFile() {
 
       const buffer = await downloadMegaFile(megaUrl);
 
-      console.log('📦 Session ZIP downloaded.');
+      console.log('📦 Session ZIP downloaded!');
       console.log('📦 Extracting session files...');
 
       extractSessionZip(buffer);
@@ -301,19 +308,12 @@ async function connectToWA() {
 
     const nikka = makeWASocket({
       logger: P({ level: 'warn' }),
-
       printQRInTerminal: false,
-
       browser: Browsers.macOS('Firefox'),
-
       auth: state,
-
       version,
-
       syncFullHistory: false,
-
       markOnlineOnConnect: true,
-
       generateHighQualityLinkPreview: true
     });
 
@@ -332,14 +332,12 @@ async function connectToWA() {
 
       if (qr) {
         console.log(
-          '⚠️ QR received. The downloaded session may be invalid or expired.'
+          '⚠️ QR received. Session may be invalid or expired.'
         );
       }
 
       if (connection === 'connecting') {
-        console.log(
-          '⏳ NIKKA X MD Connecting to WhatsApp...'
-        );
+        console.log('⏳ NIKKA X MD Connecting...');
       }
 
       if (connection === 'close') {
@@ -362,18 +360,12 @@ async function connectToWA() {
 
         if (statusCode === DisconnectReason.loggedOut) {
           console.log('❌ WhatsApp Logged Out!');
-          console.log(
-            '⚠️ Generate a new session using WEB-PAIR.'
-          );
+          console.log('⚠️ A new session is required.');
           return;
         }
 
-        if (
-          statusCode === DisconnectReason.badSession
-        ) {
-          console.log(
-            '❌ Invalid session. A new session is required.'
-          );
+        if (statusCode === DisconnectReason.badSession) {
+          console.log('❌ Invalid session!');
           return;
         }
 
@@ -424,7 +416,7 @@ async function connectToWA() {
 
 
     // =====================================
-    // SAVE SESSION UPDATES
+    // SAVE SESSION
     // =====================================
 
     nikka.ev.on('creds.update', saveCreds);
@@ -577,36 +569,26 @@ async function connectToWA() {
                   command: commandName,
                   args,
                   q,
-
                   isGroup,
                   sender,
                   senderNumber,
-
                   botNumber2,
                   botNumber,
-
                   pushname,
-
                   isMe,
                   isOwner,
-
                   groupMetadata,
                   groupName,
                   participants,
                   groupAdmins,
-
                   isBotAdmins,
                   isAdmins,
-
                   reply
                 }
               );
 
             } catch (error) {
-              console.error(
-                '[PLUGIN ERROR]',
-                error
-              );
+              console.error('[PLUGIN ERROR]', error);
 
               await reply(
                 '❌ Command Error: ' + error.message
