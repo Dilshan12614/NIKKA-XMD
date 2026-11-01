@@ -8,7 +8,7 @@ const SETTINGS_FILE = path.join(
     '../data/antidelete.json'
 );
 
-const FOOTER = '> ᴘᴏᴡᴇʀᴇᴅ ʙʏ ɴɪᴋᴋᴀ x ᴍᴅ';
+const FOOTER = '> ᴘᴏᴡᴇʀᴇᴅ ʙʏ ᴅᴀɴᴜᴡᴀ x ᴍᴅ';
 const IMAGE = 'https://files.catbox.moe/2yenlk.jpeg';
 
 function loadSettings() {
@@ -17,12 +17,16 @@ function loadSettings() {
             return { gc: false, dm: false };
         }
 
+        const saved = JSON.parse(
+            fs.readFileSync(SETTINGS_FILE, 'utf8')
+        );
+
         return {
-            gc: false,
-            dm: false,
-            ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'))
+            gc: Boolean(saved.gc),
+            dm: Boolean(saved.dm)
         };
-    } catch {
+    } catch (error) {
+        console.error('[ANTIDELETE SETTINGS]', error);
         return { gc: false, dm: false };
     }
 }
@@ -49,10 +53,11 @@ cmd({
     filename: __filename
 }, async (conn, mek, m, { from, reply, args }) => {
 
-    const ownerNumber = String(config.BOT_OWNER || '94703270772')
-        .replace(/\D/g, '');
+    const ownerNumber = String(
+        config.BOT_OWNER || '94772194789'
+    ).replace(/\D/g, '');
 
-    const senderNumber = (m.sender || '')
+    const senderNumber = String(m.sender || '')
         .split('@')[0]
         .split(':')[0];
 
@@ -60,61 +65,70 @@ cmd({
         return reply(
             '*╭──────────────●●►*\n' +
             '*┋* ❌ *OWNER ONLY COMMAND*\n' +
-            '*┋* ➜ Only bot owner can use this command.\n' +
+            '*┋* ➜ Only the bot owner can use this command.\n' +
             '*╰──────────────●●►*\n\n' +
             FOOTER
         );
     }
 
-    const type = (args?.[0] || '').toLowerCase();
-    const action = (args?.[1] || '').toLowerCase();
+    try {
+        const type = String(args?.[0] || '').toLowerCase();
+        const action = String(args?.[1] || '').toLowerCase();
 
-    const status = global.antiDeleteSettings;
+        const status = global.antiDeleteSettings;
 
-    if (
-        !['gc', 'dm'].includes(type) ||
-        !['on', 'off'].includes(action)
-    ) {
-        const text =
-            '*╭──────────────●●►*\n' +
-            '*┋* 🛡️ *ANTI DELETE PANEL*\n' +
-            '*┋*\n' +
-            '*┋* 📌 *COMMANDS*\n' +
-            '*┋* ➜ `.antidelete gc on`\n' +
-            '*┋* ➜ `.antidelete gc off`\n' +
-            '*┋* ➜ `.antidelete dm on`\n' +
-            '*┋* ➜ `.antidelete dm off`\n' +
-            '*┋*\n' +
-            '*┋* 📊 *CURRENT STATUS*\n' +
-            `*┋* ➜ 👥 Group: ${status.gc ? '✅ ON' : '❌ OFF'}\n` +
-            `*┋* ➜ 👤 Personal: ${status.dm ? '✅ ON' : '❌ OFF'}\n` +
-            '*╰──────────────●●►*\n\n' +
-            FOOTER;
+        if (
+            !['gc', 'dm'].includes(type) ||
+            !['on', 'off'].includes(action)
+        ) {
+            const text =
+                '*╭──────────────●●►*\n' +
+                '*┋* 🛡️ *ANTI DELETE PANEL*\n' +
+                '*┋*\n' +
+                '*┋* 📌 *COMMANDS*\n' +
+                '*┋* ➜ `.antidelete gc on`\n' +
+                '*┋* ➜ `.antidelete gc off`\n' +
+                '*┋* ➜ `.antidelete dm on`\n' +
+                '*┋* ➜ `.antidelete dm off`\n' +
+                '*┋*\n' +
+                '*┋* 📊 *CURRENT STATUS*\n' +
+                `*┋* ➜ 👥 Group: ${status.gc ? '✅ ON' : '❌ OFF'}\n` +
+                `*┋* ➜ 👤 Personal: ${status.dm ? '✅ ON' : '❌ OFF'}\n` +
+                '*╰──────────────●●►*\n\n' +
+                FOOTER;
 
-        try {
-            return await conn.sendMessage(
-                from,
-                {
-                    image: { url: IMAGE },
-                    caption: text
-                },
-                { quoted: mek }
-            );
-        } catch {
-            return reply(text);
+            try {
+                return await conn.sendMessage(
+                    from,
+                    {
+                        image: { url: IMAGE },
+                        caption: text
+                    },
+                    { quoted: mek }
+                );
+            } catch {
+                return reply(text);
+            }
         }
+
+        status[type] = action === 'on';
+        saveSettings();
+
+        return reply(
+            '*╭──────────────●●►*\n' +
+            '*┋* 🛡️ *ANTI DELETE UPDATED*\n' +
+            '*┋*\n' +
+            `*┋* ➜ Type: ${type.toUpperCase()}\n` +
+            `*┋* ➜ Status: ${status[type] ? '✅ ENABLED' : '❌ DISABLED'}\n` +
+            '*╰──────────────●●►*\n\n' +
+            FOOTER
+        );
+
+    } catch (error) {
+        console.error('[ANTIDELETE COMMAND ERROR]', error);
+
+        return reply(
+            '❌ AntiDelete Error: ' + error.message
+        );
     }
-
-    status[type] = action === 'on';
-    saveSettings();
-
-    return reply(
-        '*╭──────────────●●►*\n' +
-        '*┋* 🛡️ *ANTI DELETE UPDATED*\n' +
-        '*┋*\n' +
-        `*┋* ➜ Type: ${type.toUpperCase()}\n` +
-        `*┋* ➜ Status: ${status[type] ? '✅ ON' : '❌ OFF'}\n` +
-        '*╰──────────────●●►*\n\n' +
-        FOOTER
-    );
 });
