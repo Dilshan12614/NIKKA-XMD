@@ -27,4 +27,9 @@ jobs:
         run: npm install --legacy-peer-deps
 
       - name: Start NIKKA X MD
+        env:
+          SASA_DEV_API_KEY: ${{ secrets.SASA_DEV_API_KEY }}
+          SASA_API_KEY: ${{ secrets.SASA_API_KEY }}
+          SASA_YTMP3_API_KEY: ${{ secrets.SASA_YTMP3_API_KEY }}
+          SASA_TTS_API_KEY: ${{ secrets.SASA_TTS_API_KEY }}
         run: npm start
