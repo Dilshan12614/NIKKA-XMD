@@ -6,6 +6,7 @@ const {
     getContentType,
     fetchLatestBaileysVersion,
     Browsers
+    downloadMediaMessage,
 } = require('@whiskeysockets/baileys');
 
 const fs = require('fs');
