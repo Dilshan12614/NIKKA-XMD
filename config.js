@@ -15,7 +15,7 @@ module.exports = {
 
     SESSION_ID:
         process.env.SESSION_ID ||
-        'THENUVA-XMD=hnAhRZwZ#qRQ56xQS8eop537VDb2OBehQsytYY0VyCvHPnrmVMMI',
+        'THENUVA-XMD=pvZ0VbpD#vx9art6w7v-xuS4HUd_Yyd8Fh1SbZV69gdUZ61aGTl0',
 
     // =====================================
     // BOT INFORMATION
