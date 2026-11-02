@@ -13,15 +13,14 @@ const P = require('pino');
 const express = require('express');
 const axios = require('axios');
 const path = require('path');
+const os = require('os');
+const { execFileSync } = require('child_process');
 const qrcode = require('qrcode-terminal');
 const { File } = require('megajs');
 
 const config = require('./config');
 
-const {
-    sms,
-    downloadMediaMessage
-} = require('./lib/msg');
+const { sms, downloadMediaMessage } = require('./lib/msg');
 
 const {
     getBuffer,
@@ -44,7 +43,7 @@ const port = process.env.PORT || 8000;
 const prefix = config.PREFIX || '.';
 
 const ownerNumber = [
-    String(config.BOT_OWNER || '94772194789')
+    String(config.BOT_OWNER || '94772194789').replace(/\D/g, '')
 ];
 
 const authDir = path.join(__dirname, 'auth_info_baileys');
@@ -67,39 +66,41 @@ async function ensureSessionFile() {
     fs.mkdirSync(authDir, { recursive: true });
 
     if (fs.existsSync(credsPath)) {
-        console.log('✅ Existing session found.');
-        return true;
+        try {
+            JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+            console.log('✅ Existing session found.');
+            return true;
+        } catch {
+            console.log('⚠️ Existing creds.json is invalid.');
+        }
     }
 
-    const sessionID =
-        config.SESSION_ID || process.env.SESSION_ID;
+    const sessionID = config.SESSION_ID || process.env.SESSION_ID;
 
     if (!sessionID) {
         console.error('❌ SESSION_ID is missing.');
         return false;
     }
 
+    let tempDir;
+
     try {
         console.log('🔄 Downloading session from MEGA...');
 
         let clean = String(sessionID).trim();
 
-        if (clean.startsWith('THENUVA-XMD=')) {
-            clean = clean.substring('THENUVA-XMD='.length);
-        }
+        clean = clean.replace(
+            /^(NIKKA-XMD|THENUVA-XMD)=/,
+            ''
+        );
 
         const match = clean.match(/^([^#]+)#(.+)$/);
 
         if (!match) {
-            throw new Error('Invalid session format.');
+            throw new Error('Invalid MEGA session format.');
         }
 
-        const fileId = match[1];
-        const fileKey = match[2];
-
-        const megaURL =
-            `https://mega.nz/file/${fileId}#${fileKey}`;
-
+        const megaURL = `https://mega.nz/file/${match[1]}#${match[2]}`;
         const filer = File.fromURL(megaURL);
 
         const data = await new Promise((resolve, reject) => {
@@ -113,23 +114,98 @@ async function ensureSessionFile() {
             throw new Error('Empty MEGA download.');
         }
 
-        const parsed = JSON.parse(data.toString());
-
-        if (!parsed || typeof parsed !== 'object') {
-            throw new Error('Invalid session JSON.');
-        }
-
-        fs.writeFileSync(
-            credsPath,
-            JSON.stringify(parsed, null, 2)
+        tempDir = fs.mkdtempSync(
+            path.join(os.tmpdir(), 'nikka-session-')
         );
 
-        console.log('✅ Session restored successfully!');
+        const zipPath = path.join(tempDir, 'session.zip');
+        const extractDir = path.join(tempDir, 'extracted');
+
+        fs.mkdirSync(extractDir, { recursive: true });
+        fs.writeFileSync(zipPath, data);
+
+        if (data[0] === 0x50 && data[1] === 0x4B) {
+            console.log('📦 ZIP session detected. Extracting...');
+
+            execFileSync(
+                'unzip',
+                ['-o', zipPath, '-d', extractDir],
+                { stdio: 'pipe' }
+            );
+
+            function findCreds(dir) {
+                const entries = fs.readdirSync(dir, {
+                    withFileTypes: true
+                });
+
+                for (const entry of entries) {
+                    const fullPath = path.join(dir, entry.name);
+
+                    if (
+                        entry.isFile() &&
+                        entry.name === 'creds.json'
+                    ) {
+                        return fullPath;
+                    }
+
+                    if (entry.isDirectory()) {
+                        const found = findCreds(fullPath);
+                        if (found) return found;
+                    }
+                }
+
+                return null;
+            }
+
+            const foundCreds = findCreds(extractDir);
+
+            if (!foundCreds) {
+                throw new Error('creds.json not found inside ZIP session.');
+            }
+
+            const sessionRoot = path.dirname(foundCreds);
+
+            JSON.parse(fs.readFileSync(foundCreds, 'utf8'));
+
+            fs.cpSync(sessionRoot, authDir, {
+                recursive: true,
+                force: true
+            });
+
+            console.log('✅ ZIP session extracted successfully!');
+
+        } else {
+            const parsed = JSON.parse(data.toString('utf8'));
+
+            fs.writeFileSync(
+                credsPath,
+                JSON.stringify(parsed, null, 2)
+            );
+
+            console.log('✅ JSON session restored.');
+        }
+
+        if (!fs.existsSync(credsPath)) {
+            throw new Error('Session restore failed: creds.json missing.');
+        }
+
+        JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+
+        console.log('✅ MEGA SESSION RESTORED SUCCESSFULLY!');
+
         return true;
 
     } catch (error) {
         console.error('❌ SESSION ERROR:', error.message);
         return false;
+
+    } finally {
+        if (tempDir && fs.existsSync(tempDir)) {
+            fs.rmSync(tempDir, {
+                recursive: true,
+                force: true
+            });
+        }
     }
 }
 
@@ -155,10 +231,7 @@ function loadPlugins() {
 
     for (const plugin of pluginFiles) {
         try {
-            const pluginPath = path.join(pluginsDir, plugin);
-
-            require(pluginPath);
-
+            require(path.join(pluginsDir, plugin));
             loaded++;
 
             console.log(`✅ Plugin loaded: ${plugin}`);
@@ -197,26 +270,16 @@ async function connectToWA() {
 
         socket = makeWASocket({
             logger: P({ level: 'silent' }),
-
             printQRInTerminal: false,
-
             browser: Browsers.macOS('Firefox'),
-
             auth: state,
-
             version,
-
             syncFullHistory: true,
-
             markOnlineOnConnect: true,
-
             generateHighQualityLinkPreview: true
         });
 
-
-        // ======================================
         // PAIR CODE
-        // ======================================
 
         if (!state.creds.registered && pairingRequested) {
             const number = process.env.PAIR_NUMBER;
@@ -225,8 +288,9 @@ async function connectToWA() {
                 await delay(3000);
 
                 try {
-                    const code =
-                        await socket.requestPairingCode(number.replace(/\D/g, ''));
+                    const code = await socket.requestPairingCode(
+                        number.replace(/\D/g, '')
+                    );
 
                     console.log('================================');
                     console.log('📱 WHATSAPP PAIR CODE');
@@ -234,18 +298,14 @@ async function connectToWA() {
                     console.log('================================');
 
                 } catch (error) {
-                    console.error(
-                        '❌ Pair code error:',
-                        error.message
-                    );
+                    console.error('❌ Pair code error:', error.message);
                 }
+            } else {
+                console.log('⚠️ PAIR_NUMBER secret is missing.');
             }
         }
 
-
-        // ======================================
         // CONNECTION UPDATE
-        // ======================================
 
         socket.ev.on('connection.update', async update => {
             const { connection, lastDisconnect, qr } = update;
@@ -271,15 +331,11 @@ async function connectToWA() {
                     await socket.sendMessage(
                         ownerNumber[0] + '@s.whatsapp.net',
                         {
-                            text:
-                                `DANUWA-MD connected ✅\n\nPREFIX: ${prefix}`
+                            text: `DANUWA-MD connected ✅\n\nPREFIX: ${prefix}`
                         }
                     );
                 } catch (error) {
-                    console.log(
-                        'Owner notification failed:',
-                        error.message
-                    );
+                    console.log('Owner notification failed:', error.message);
                 }
             }
 
@@ -290,17 +346,13 @@ async function connectToWA() {
                     lastDisconnect?.error?.output?.statusCode;
 
                 if (statusCode === DisconnectReason.loggedOut) {
-                    console.log(
-                        '❌ WhatsApp logged out. Authentication required.'
-                    );
+                    console.log('❌ WhatsApp logged out. Authentication required.');
                     return;
                 }
 
                 console.log('🔄 Connection closed. Reconnecting...');
 
-                if (reconnectTimer) {
-                    clearTimeout(reconnectTimer);
-                }
+                if (reconnectTimer) clearTimeout(reconnectTimer);
 
                 reconnectTimer = setTimeout(() => {
                     connectToWA();
@@ -308,41 +360,27 @@ async function connectToWA() {
             }
         });
 
-
-        // ======================================
         // SAVE CREDS
-        // ======================================
 
         socket.ev.on('creds.update', saveCreds);
 
-
-        // ======================================
         // MESSAGE HANDLER
-        // ======================================
 
         socket.ev.on('messages.upsert', async ({ messages }) => {
-
             for (const mek of messages) {
-
                 if (!mek || !mek.message) continue;
 
                 try {
-
-                    if (mek.key.remoteJid === 'status@broadcast') {
-                        continue;
-                    }
+                    if (mek.key.remoteJid === 'status@broadcast') continue;
 
                     let type = getContentType(mek.message);
 
                     if (type === 'ephemeralMessage') {
-                        mek.message =
-                            mek.message.ephemeralMessage.message;
-
+                        mek.message = mek.message.ephemeralMessage.message;
                         type = getContentType(mek.message);
                     }
 
                     const m = sms(socket, mek);
-
                     const from = mek.key.remoteJid;
 
                     const body =
@@ -355,33 +393,23 @@ async function connectToWA() {
                     const isCmd = body.startsWith(prefix);
 
                     const commandName = isCmd
-                        ? body.slice(prefix.length)
-                            .trim()
-                            .split(/\s+/)[0]
-                            .toLowerCase()
+                        ? body.slice(prefix.length).trim().split(/\s+/)[0].toLowerCase()
                         : '';
 
                     const args = body.trim().split(/\s+/).slice(1);
-
                     const q = args.join(' ');
 
                     const sender = mek.key.fromMe
                         ? socket.user.id
-                        : (
-                            mek.key.participant ||
-                            mek.key.remoteJid
-                        );
+                        : (mek.key.participant || mek.key.remoteJid);
 
                     const senderNumber =
                         sender.split('@')[0].split(':')[0];
 
                     const isGroup = from.endsWith('@g.us');
-
-                    const botNumber =
-                        socket.user.id.split(':')[0];
+                    const botNumber = socket.user.id.split(':')[0];
 
                     const pushname = mek.pushName || 'User';
-
                     const isMe = botNumber === senderNumber;
 
                     const isOwner =
@@ -394,11 +422,8 @@ async function connectToWA() {
                         ? await socket.groupMetadata(from).catch(() => null)
                         : null;
 
-                    const groupName =
-                        groupMetadata?.subject || '';
-
-                    const participants =
-                        groupMetadata?.participants || [];
+                    const groupName = groupMetadata?.subject || '';
+                    const participants = groupMetadata?.participants || [];
 
                     const groupAdmins = isGroup
                         ? await getGroupAdmins(participants)
@@ -419,23 +444,15 @@ async function connectToWA() {
                             { quoted: mek }
                         );
 
-
-                    // ======================================
                     // COMMAND HANDLER
-                    // ======================================
 
                     if (isCmd) {
-
                         const cmd = commands.find(c =>
                             c.pattern === commandName ||
-                            (
-                                c.alias &&
-                                c.alias.includes(commandName)
-                            )
+                            (c.alias && c.alias.includes(commandName))
                         );
 
                         if (cmd) {
-
                             if (cmd.react) {
                                 await socket.sendMessage(from, {
                                     react: {
@@ -446,39 +463,32 @@ async function connectToWA() {
                             }
 
                             try {
-
-                                await cmd.function(
-                                    socket,
-                                    mek,
-                                    m,
-                                    {
-                                        from,
-                                        quoted: mek,
-                                        body,
-                                        isCmd,
-                                        command: commandName,
-                                        args,
-                                        q,
-                                        isGroup,
-                                        sender,
-                                        senderNumber,
-                                        botNumber2,
-                                        botNumber,
-                                        pushname,
-                                        isMe,
-                                        isOwner,
-                                        groupMetadata,
-                                        groupName,
-                                        participants,
-                                        groupAdmins,
-                                        isBotAdmins,
-                                        isAdmins,
-                                        reply
-                                    }
-                                );
+                                await cmd.function(socket, mek, m, {
+                                    from,
+                                    quoted: mek,
+                                    body,
+                                    isCmd,
+                                    command: commandName,
+                                    args,
+                                    q,
+                                    isGroup,
+                                    sender,
+                                    senderNumber,
+                                    botNumber2,
+                                    botNumber,
+                                    pushname,
+                                    isMe,
+                                    isOwner,
+                                    groupMetadata,
+                                    groupName,
+                                    participants,
+                                    groupAdmins,
+                                    isBotAdmins,
+                                    isAdmins,
+                                    reply
+                                });
 
                             } catch (error) {
-
                                 console.error(
                                     `[COMMAND ERROR: ${commandName}]`,
                                     error
@@ -491,64 +501,43 @@ async function connectToWA() {
                         }
                     }
 
-
-                    // ======================================
                     // REPLY HANDLERS
-                    // ======================================
 
                     for (const handler of replyHandlers) {
-
                         try {
-
                             if (
                                 handler.filter(body, {
                                     sender,
                                     message: mek
                                 })
                             ) {
-
-                                await handler.function(
-                                    socket,
-                                    mek,
-                                    m,
-                                    {
-                                        from,
-                                        quoted: mek,
-                                        body,
-                                        sender,
-                                        reply
-                                    }
-                                );
+                                await handler.function(socket, mek, m, {
+                                    from,
+                                    quoted: mek,
+                                    body,
+                                    sender,
+                                    reply
+                                });
 
                                 break;
                             }
-
                         } catch (error) {
-
-                            console.error(
-                                '[REPLY HANDLER ERROR]',
-                                error
-                            );
+                            console.error('[REPLY HANDLER ERROR]', error);
                         }
                     }
 
                 } catch (error) {
-
                     console.error('[MESSAGE ERROR]', error);
-
                 }
             }
         });
 
     } catch (error) {
-
         isConnecting = false;
 
         console.error('❌ CONNECTION ERROR:', error);
 
-        if (reconnectTimer) {
-            clearTimeout(reconnectTimer);
-        }
+        if (reconnectTimer) clearTimeout(reconnectTimer);
 
         reconnectTimer = setTimeout(() => {
             connectToWA();
@@ -589,8 +578,6 @@ app.listen(port, () => {
     if (ready) {
         await connectToWA();
     } else {
-        console.log(
-            '❌ Bot not connected. Check your SESSION_ID.'
-        );
+        console.log('❌ Bot not connected. Check your SESSION_ID.');
     }
 })();
