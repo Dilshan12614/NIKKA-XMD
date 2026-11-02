@@ -14,13 +14,23 @@ const express = require('express');
 const axios = require('axios');
 const path = require('path');
 const qrcode = require('qrcode-terminal');
+const { File } = require('megajs');
 
 const config = require('./config');
 const { sms, downloadMediaMessage } = require('./lib/msg');
+
 const {
-  getBuffer, getGroupAdmins, getRandom, h2k, isUrl, Json, runtime, sleep, fetchJson
+  getBuffer,
+  getGroupAdmins,
+  getRandom,
+  h2k,
+  isUrl,
+  Json,
+  runtime,
+  sleep,
+  fetchJson
 } = require('./lib/functions');
-const { File } = require('megajs');
+
 const { commands, replyHandlers } = require('./command');
 
 const app = express();
@@ -28,158 +38,376 @@ const port = process.env.PORT || 8000;
 
 const prefix = '.';
 const ownerNumber = ['94772194789'];
-const credsPath = path.join(__dirname, '/auth_info_baileys/creds.json');
+
+const authDir = path.join(__dirname, 'auth_info_baileys');
+const credsPath = path.join(authDir, 'creds.json');
+
+let socket;
+let isConnecting = false;
+let reconnectTimer = null;
+let pluginsLoaded = false;
+
+function normalizeSessionId(value) {
+  if (!value) return '';
+
+  let session = String(value).trim();
+
+  if (session.startsWith('THENUVA-XMD=')) {
+    session = session.slice('THENUVA-XMD='.length);
+  }
+
+  if (session.startsWith('https://mega.nz/')) {
+    return session;
+  }
+
+  throw new Error(
+    'SESSION_ID must contain a complete MEGA URL. The prefix alone is not a URL.'
+  );
+}
 
 async function ensureSessionFile() {
-  if (!fs.existsSync(credsPath)) {
-    if (!config.SESSION_ID) {
-      console.error('❌ SESSION_ID env variable is missing. Cannot restore session.');
-      process.exit(1);
+  fs.mkdirSync(authDir, { recursive: true });
+
+  if (fs.existsSync(credsPath)) {
+    console.log('✅ Existing WhatsApp session found.');
+    return true;
+  }
+
+  const sessionID = config.SESSION_ID || process.env.SESSION_ID;
+
+  if (!sessionID) {
+    console.error('❌ SESSION_ID is missing.');
+    return false;
+  }
+
+  try {
+    const megaURL = normalizeSessionId(sessionID);
+
+    console.log('🔄 Downloading session from MEGA...');
+
+    const filer = File.fromURL(megaURL);
+
+    const data = await new Promise((resolve, reject) => {
+      filer.download((err, buffer) => {
+        if (err) return reject(err);
+        resolve(buffer);
+      });
+    });
+
+    if (!data || !data.length) {
+      throw new Error('Downloaded session file is empty.');
     }
 
-    console.log("🔄 creds.json not found. Downloading session from MEGA...");
+    const parsed = JSON.parse(data.toString());
 
-    const sessdata = config.SESSION_ID;
-    const filer = File.fromURL(`https://mega.nz/file/${sessdata}`);
+    if (!parsed || typeof parsed !== 'object') {
+      throw new Error('Invalid session JSON.');
+    }
 
-    filer.download((err, data) => {
-      if (err) {
-        console.error("❌ Failed to download session file from MEGA:", err);
-        process.exit(1);
-      }
+    fs.writeFileSync(credsPath, JSON.stringify(parsed, null, 2));
 
-      fs.mkdirSync(path.join(__dirname, '/auth_info_baileys/'), { recursive: true });
-      fs.writeFileSync(credsPath, data);
-      console.log("✅ Session downloaded and saved. Restarting bot...");
-      setTimeout(() => {
-        connectToWA();
-      }, 2000);
-    });
-  } else {
-    setTimeout(() => {
-      connectToWA();
-    }, 1000);
+    console.log('✅ Session downloaded successfully.');
+    return true;
+
+  } catch (error) {
+    console.error('❌ SESSION ERROR:', error.message);
+    return false;
   }
 }
 
-async function connectToWA() {
-  console.log("Connecting DANUWA-MD 🧬...");
-  const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, '/auth_info_baileys/'));
-  const { version } = await fetchLatestBaileysVersion();
+function loadPlugins() {
+  if (pluginsLoaded) return;
 
-  const danuwa = makeWASocket({
-    logger: P({ level: 'silent' }),
-    printQRInTerminal: false,
-    browser: Browsers.macOS("Firefox"),
-    auth: state,
-    version,
-    syncFullHistory: true,
-    markOnlineOnConnect: true,
-    generateHighQualityLinkPreview: true,
-  });
+  const pluginsDir = path.join(__dirname, 'plugins');
 
-  danuwa.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
-    if (connection === 'close') {
-      if (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut) {
-        connectToWA();
-      }
-    } else if (connection === 'open') {
-      console.log('✅ DANUWA-MD connected to WhatsApp');
+  if (!fs.existsSync(pluginsDir)) {
+    console.log('⚠️ Plugins folder not found.');
+    return;
+  }
 
-      const up = `DANUWA-MD connected ✅\n\nPREFIX: ${prefix}`;
-      await danuwa.sendMessage(ownerNumber[0] + "@s.whatsapp.net", {
-        image: { url: `https://github.com/DANUWA-MD/DANUWA-MD/blob/main/images/DANUWA-MD.png?raw=true` },
-        caption: up
-      });
+  const files = fs.readdirSync(pluginsDir)
+    .filter(file => path.extname(file).toLowerCase() === '.js');
 
-      fs.readdirSync("./plugins/").forEach((plugin) => {
-        if (path.extname(plugin).toLowerCase() === ".js") {
-          require(`./plugins/${plugin}`);
-        }
-      });
+  for (const plugin of files) {
+    try {
+      const pluginPath = path.join(pluginsDir, plugin);
+
+      delete require.cache[require.resolve(pluginPath)];
+      require(pluginPath);
+
+      console.log(`✅ Plugin loaded: ${plugin}`);
+
+    } catch (error) {
+      console.error(`❌ Plugin Error (${plugin}):`, error.message);
     }
-  });
+  }
 
-  danuwa.ev.on('creds.update', saveCreds);
-
-  danuwa.ev.on('messages.upsert', async ({ messages }) => {
-    for (const msg of messages) {
-      if (msg.messageStubType === 68) {
-        await danuwa.sendMessageAck(msg.key);
-      }
-    }
-
-    const mek = messages[0];
-    if (!mek || !mek.message) return;
-
-    mek.message = getContentType(mek.message) === 'ephemeralMessage' ? mek.message.ephemeralMessage.message : mek.message;
-    if (mek.key.remoteJid === 'status@broadcast') return;
-
-    const m = sms(danuwa, mek);
-    const type = getContentType(mek.message);
-    const from = mek.key.remoteJid;
-    const body = type === 'conversation' ? mek.message.conversation : mek.message[type]?.text || mek.message[type]?.caption || '';
-    const isCmd = body.startsWith(prefix);
-    const commandName = isCmd ? body.slice(prefix.length).trim().split(" ")[0].toLowerCase() : '';
-    const args = body.trim().split(/ +/).slice(1);
-    const q = args.join(' ');
-
-    const sender = mek.key.fromMe ? danuwa.user.id : (mek.key.participant || mek.key.remoteJid);
-    const senderNumber = sender.split('@')[0];
-    const isGroup = from.endsWith('@g.us');
-    const botNumber = danuwa.user.id.split(':')[0];
-    const pushname = mek.pushName || 'Sin Nombre';
-    const isMe = botNumber.includes(senderNumber);
-    const isOwner = ownerNumber.includes(senderNumber) || isMe;
-    const botNumber2 = await jidNormalizedUser(danuwa.user.id);
-
-    const groupMetadata = isGroup ? await danuwa.groupMetadata(from).catch(() => {}) : '';
-    const groupName = isGroup ? groupMetadata.subject : '';
-    const participants = isGroup ? groupMetadata.participants : '';
-    const groupAdmins = isGroup ? await getGroupAdmins(participants) : '';
-    const isBotAdmins = isGroup ? groupAdmins.includes(botNumber2) : false;
-    const isAdmins = isGroup ? groupAdmins.includes(sender) : false;
-
-    const reply = (text) => danuwa.sendMessage(from, { text }, { quoted: mek });
-
-    if (isCmd) {
-      const cmd = commands.find((c) => c.pattern === commandName || (c.alias && c.alias.includes(commandName)));
-      if (cmd) {
-        if (cmd.react) danuwa.sendMessage(from, { react: { text: cmd.react, key: mek.key } });
-        try {
-          cmd.function(danuwa, mek, m, {
-            from, quoted: mek, body, isCmd, command: commandName, args, q,
-            isGroup, sender, senderNumber, botNumber2, botNumber, pushname,
-            isMe, isOwner, groupMetadata, groupName, participants, groupAdmins,
-            isBotAdmins, isAdmins, reply,
-          });
-        } catch (e) {
-          console.error("[PLUGIN ERROR]", e);
-        }
-      }
-    }
-
-    const replyText = body;
-    for (const handler of replyHandlers) {
-      if (handler.filter(replyText, { sender, message: mek })) {
-        try {
-          await handler.function(danuwa, mek, m, {
-            from, quoted: mek, body: replyText, sender, reply,
-          });
-          break;
-        } catch (e) {
-          console.log("Reply handler error:", e);
-        }
-      }
-    }
-  });
+  pluginsLoaded = true;
+  console.log(`🧬 Total plugins loaded: ${files.length}`);
 }
 
-ensureSessionFile();
+async function connectToWA() {
+  if (isConnecting) return;
 
-app.get("/", (req, res) => {
-  res.send("Hey, DANUWA-MD started✅");
+  isConnecting = true;
+
+  try {
+    console.log('Connecting DANUWA-MD 🧬...');
+
+    const { state, saveCreds } =
+      await useMultiFileAuthState(authDir);
+
+    const { version } = await fetchLatestBaileysVersion();
+
+    socket = makeWASocket({
+      logger: P({ level: 'silent' }),
+      printQRInTerminal: false,
+      browser: Browsers.macOS('Firefox'),
+      auth: state,
+      version,
+      syncFullHistory: true,
+      markOnlineOnConnect: true,
+      generateHighQualityLinkPreview: true
+    });
+
+    socket.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        console.log('📱 Scan this QR code:');
+        qrcode.generate(qr, { small: true });
+      }
+
+      if (connection === 'connecting') {
+        console.log('🔄 Connecting to WhatsApp...');
+      }
+
+      if (connection === 'open') {
+        isConnecting = false;
+
+        console.log('✅ DANUWA-MD connected to WhatsApp.');
+
+        loadPlugins();
+
+        try {
+          await socket.sendMessage(
+            ownerNumber[0] + '@s.whatsapp.net',
+            {
+              text: `DANUWA-MD connected ✅\n\nPREFIX: ${prefix}`
+            }
+          );
+        } catch (error) {
+          console.log('Owner notification failed:', error.message);
+        }
+      }
+
+      if (connection === 'close') {
+        isConnecting = false;
+
+        const statusCode =
+          lastDisconnect?.error?.output?.statusCode;
+
+        if (statusCode === DisconnectReason.loggedOut) {
+          console.log('❌ WhatsApp logged out. New authentication required.');
+          return;
+        }
+
+        console.log('🔄 Connection closed. Reconnecting...');
+
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+
+        reconnectTimer = setTimeout(() => {
+          connectToWA();
+        }, 5000);
+      }
+    });
+
+    socket.ev.on('creds.update', saveCreds);
+
+    socket.ev.on('messages.upsert', async ({ messages }) => {
+      for (const mek of messages) {
+        if (!mek || !mek.message) continue;
+
+        try {
+          if (mek.messageStubType === 68) {
+            await socket.sendMessageAck(mek.key);
+          }
+
+          if (mek.key.remoteJid === 'status@broadcast') continue;
+
+          const messageType = getContentType(mek.message);
+
+          if (messageType === 'ephemeralMessage') {
+            mek.message = mek.message.ephemeralMessage.message;
+          }
+
+          const m = sms(socket, mek);
+          const type = getContentType(mek.message);
+          const from = mek.key.remoteJid;
+
+          const body =
+            type === 'conversation'
+              ? mek.message.conversation
+              : mek.message[type]?.text ||
+                mek.message[type]?.caption ||
+                '';
+
+          const isCmd = body.startsWith(prefix);
+
+          const commandName = isCmd
+            ? body.slice(prefix.length).trim().split(/\s+/)[0].toLowerCase()
+            : '';
+
+          const args = body.trim().split(/\s+/).slice(1);
+          const q = args.join(' ');
+
+          const sender = mek.key.fromMe
+            ? socket.user.id
+            : (mek.key.participant || mek.key.remoteJid);
+
+          const senderNumber = sender.split('@')[0].split(':')[0];
+
+          const isGroup = from.endsWith('@g.us');
+
+          const botNumber = socket.user.id.split(':')[0];
+          const pushname = mek.pushName || 'User';
+
+          const isMe = botNumber === senderNumber;
+
+          const isOwner =
+            ownerNumber.includes(senderNumber) || isMe;
+
+          const botNumber2 = await jidNormalizedUser(socket.user.id);
+
+          const groupMetadata = isGroup
+            ? await socket.groupMetadata(from).catch(() => null)
+            : null;
+
+          const groupName = groupMetadata?.subject || '';
+
+          const participants = groupMetadata?.participants || [];
+
+          const groupAdmins = isGroup
+            ? await getGroupAdmins(participants)
+            : [];
+
+          const isBotAdmins = isGroup
+            ? groupAdmins.includes(botNumber2)
+            : false;
+
+          const isAdmins = isGroup
+            ? groupAdmins.includes(sender)
+            : false;
+
+          const reply = (text) =>
+            socket.sendMessage(from, { text }, { quoted: mek });
+
+          if (isCmd) {
+            const cmd = commands.find(c =>
+              c.pattern === commandName ||
+              (c.alias && c.alias.includes(commandName))
+            );
+
+            if (cmd) {
+              if (cmd.react) {
+                await socket.sendMessage(from, {
+                  react: {
+                    text: cmd.react,
+                    key: mek.key
+                  }
+                }).catch(() => {});
+              }
+
+              try {
+                await cmd.function(socket, mek, m, {
+                  from,
+                  quoted: mek,
+                  body,
+                  isCmd,
+                  command: commandName,
+                  args,
+                  q,
+                  isGroup,
+                  sender,
+                  senderNumber,
+                  botNumber2,
+                  botNumber,
+                  pushname,
+                  isMe,
+                  isOwner,
+                  groupMetadata,
+                  groupName,
+                  participants,
+                  groupAdmins,
+                  isBotAdmins,
+                  isAdmins,
+                  reply
+                });
+              } catch (error) {
+                console.error('[COMMAND ERROR]', error);
+                await reply('❌ Command error: ' + error.message);
+              }
+            }
+          }
+
+          for (const handler of replyHandlers) {
+            try {
+              if (handler.filter(body, {
+                sender,
+                message: mek
+              })) {
+                await handler.function(socket, mek, m, {
+                  from,
+                  quoted: mek,
+                  body,
+                  sender,
+                  reply
+                });
+
+                break;
+              }
+            } catch (error) {
+              console.error('[REPLY HANDLER ERROR]', error);
+            }
+          }
+
+        } catch (error) {
+          console.error('[MESSAGE ERROR]', error);
+        }
+      }
+    });
+
+  } catch (error) {
+    isConnecting = false;
+    console.error('❌ CONNECTION ERROR:', error);
+
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+
+    reconnectTimer = setTimeout(connectToWA, 5000);
+  }
+}
+
+app.get('/', (req, res) => {
+  res.send('Hey, DANUWA-MD started ✅');
 });
 
-app.listen(port, () => console.log(`Server listening on http://localhost:${port}`));
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'running',
+    bot: 'DANUWA-MD'
+  });
+});
+
+app.listen(port, () => {
+  console.log(`Server listening on http://localhost:${port}`);
+});
+
+(async () => {
+  const ready = await ensureSessionFile();
+
+  if (ready) {
+    await connectToWA();
+  } else {
+    console.log('⚠️ WhatsApp connection not started. Check SESSION_ID.');
+  }
+})();
