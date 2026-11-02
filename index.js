@@ -3,10 +3,9 @@ const {
     useMultiFileAuthState,
     DisconnectReason,
     jidNormalizedUser,
-    getContentType,
     fetchLatestBaileysVersion,
     Browsers,
-    downloadMediaMessage
+    getContentType
 } = require('@whiskeysockets/baileys');
 
 const fs = require('fs');
@@ -25,10 +24,7 @@ const app = express();
 const port = process.env.PORT || 8000;
 const prefix = '.';
 
-// =====================================
-// OWNER CONFIGURATION
-// =====================================
-
+// OWNER
 let ownerNumber = String(config.BOT_OWNER || '94772194789')
     .replace(/\D/g, '');
 
@@ -36,92 +32,16 @@ if (ownerNumber.startsWith('0')) {
     ownerNumber = '94' + ownerNumber.slice(1);
 }
 
-// =====================================
 // PATHS
-// =====================================
-
 const authFolder = path.join(__dirname, 'auth_info_baileys');
 const credsPath = path.join(authFolder, 'creds.json');
-const settingsPath = path.join(__dirname, 'data', 'antidelete.json');
 
 let isConnecting = false;
 let reconnectTimer = null;
 let reconnectAttempts = 0;
 let pluginsLoaded = false;
-let activeSocket = null;
 
-// =====================================
-// ANTIDELETE SETTINGS
-// =====================================
-
-function loadAntiDeleteSettings() {
-    try {
-        if (!fs.existsSync(settingsPath)) {
-            return { gc: false, dm: false };
-        }
-
-        const data = JSON.parse(
-            fs.readFileSync(settingsPath, 'utf8')
-        );
-
-        return {
-            gc: Boolean(data.gc),
-            dm: Boolean(data.dm)
-        };
-    } catch (error) {
-        console.error('[ANTIDELETE SETTINGS]', error);
-        return { gc: false, dm: false };
-    }
-}
-
-global.antiDeleteSettings = loadAntiDeleteSettings();
-
-// =====================================
-// ANTIDELETE CACHE
-// =====================================
-
-const antiDeleteCache = new Map();
-const MAX_CACHE = 500;
-const CACHE_AGE = 24 * 60 * 60 * 1000;
-
-function cacheAntiDeleteMessage(msg) {
-    if (!msg?.message || !msg?.key?.id) return;
-
-    if (msg.key.remoteJid === 'status@broadcast') return;
-
-    const cacheKey = `${msg.key.remoteJid}:${msg.key.id}`;
-
-    antiDeleteCache.set(cacheKey, {
-        message: msg,
-        timestamp: Date.now()
-    });
-
-    while (antiDeleteCache.size > MAX_CACHE) {
-        const oldest = antiDeleteCache.keys().next().value;
-        antiDeleteCache.delete(oldest);
-    }
-}
-
-function getAntiDeleteMessage(key) {
-    if (!key?.id || !key?.remoteJid) return null;
-
-    const cacheKey = `${key.remoteJid}:${key.id}`;
-    const cached = antiDeleteCache.get(cacheKey);
-
-    if (!cached) return null;
-
-    if (Date.now() - cached.timestamp > CACHE_AGE) {
-        antiDeleteCache.delete(cacheKey);
-        return null;
-    }
-
-    return cached.message;
-}
-
-// =====================================
-// SESSION ID / MEGA URL
-// =====================================
-
+// SESSION URL
 function getMegaUrl() {
     if (!config.SESSION_ID) {
         throw new Error('SESSION_ID is missing in config!');
@@ -144,25 +64,20 @@ function getMegaUrl() {
     return `https://mega.nz/file/${sessionId}`;
 }
 
-// =====================================
 // MEGA DOWNLOAD
-// =====================================
-
 function downloadMegaFile(url) {
     return new Promise((resolve, reject) => {
         try {
             const file = File.fromURL(url);
 
-            file.loadAttributes((error) => {
+            file.loadAttributes(error => {
                 if (error) return reject(error);
 
                 file.downloadBuffer((downloadError, buffer) => {
                     if (downloadError) return reject(downloadError);
 
                     if (!buffer || !buffer.length) {
-                        return reject(
-                            new Error('Downloaded MEGA file is empty!')
-                        );
+                        return reject(new Error('Downloaded file is empty!'));
                     }
 
                     resolve(buffer);
@@ -174,10 +89,7 @@ function downloadMegaFile(url) {
     });
 }
 
-// =====================================
-// EXTRACT SESSION ZIP
-// =====================================
-
+// EXTRACT SESSION
 function extractSessionZip(buffer) {
     fs.mkdirSync(authFolder, { recursive: true });
 
@@ -202,9 +114,7 @@ function extractSessionZip(buffer) {
     zip.extractAllTo(authFolder, true);
 
     if (!fs.existsSync(credsPath)) {
-        throw new Error(
-            'creds.json not found after extracting session ZIP!'
-        );
+        throw new Error('creds.json not found!');
     }
 
     const creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
@@ -213,13 +123,10 @@ function extractSessionZip(buffer) {
         throw new Error('Session is not registered!');
     }
 
-    console.log('✅ Complete Baileys session extracted!');
+    console.log('✅ Session extracted successfully!');
 }
 
-// =====================================
 // CHECK SESSION
-// =====================================
-
 function hasValidSession() {
     try {
         if (!fs.existsSync(credsPath)) return false;
@@ -234,10 +141,7 @@ function hasValidSession() {
     }
 }
 
-// =====================================
 // PLUGIN LOADER
-// =====================================
-
 function loadPlugins() {
     if (pluginsLoaded) return;
 
@@ -248,7 +152,9 @@ function loadPlugins() {
         return;
     }
 
-    for (const plugin of fs.readdirSync(pluginFolder)) {
+    const files = fs.readdirSync(pluginFolder);
+
+    for (const plugin of files) {
         if (path.extname(plugin).toLowerCase() !== '.js') continue;
 
         try {
@@ -263,10 +169,7 @@ function loadPlugins() {
     console.log('✅ NIKKA X MD Plugins Loaded!');
 }
 
-// =====================================
-// RECONNECT SYSTEM
-// =====================================
-
+// RECONNECT
 function scheduleReconnect() {
     if (reconnectTimer) return;
 
@@ -277,9 +180,7 @@ function scheduleReconnect() {
 
     reconnectAttempts++;
 
-    console.log(
-        `🔄 Reconnecting in ${delayTime / 1000} seconds...`
-    );
+    console.log(`🔄 Reconnecting in ${delayTime / 1000} seconds...`);
 
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
@@ -287,198 +188,7 @@ function scheduleReconnect() {
     }, delayTime);
 }
 
-// =====================================
-// ANTIDELETE HANDLER
-// =====================================
-
-async function handleAntiDelete(nikka, updates) {
-    for (const event of updates) {
-        try {
-            const protocol = event.update?.message?.protocolMessage;
-
-            if (!protocol || protocol.type !== 0) continue;
-
-            const deletedKey = protocol.key;
-
-            if (!deletedKey?.id || !deletedKey?.remoteJid) continue;
-
-            const chat = deletedKey.remoteJid;
-
-            if (chat === 'status@broadcast') continue;
-
-            const isGroup = chat.endsWith('@g.us');
-            const settings = global.antiDeleteSettings || {};
-
-            if (isGroup && !settings.gc) continue;
-            if (!isGroup && !settings.dm) continue;
-
-            const original = getAntiDeleteMessage(deletedKey);
-
-            if (!original) {
-                console.log(
-                    '⚠️ AntiDelete: Original message not cached.'
-                );
-                continue;
-            }
-
-            const cacheKey = `${chat}:${deletedKey.id}`;
-            antiDeleteCache.delete(cacheKey);
-
-            const sender =
-                deletedKey.participant ||
-                original.key.participant ||
-                original.key.remoteJid;
-
-            if (!sender) continue;
-
-            const content = original.message;
-            const type = getContentType(content);
-
-            if (!type) continue;
-
-            const senderTag = sender.split('@')[0];
-
-            const header =
-                '*╭━━━〔 🛡️ NIKKA X MD 〕━━━┈⊷*\n' +
-                '┃\n' +
-                `┃ 👤 Sender: @${senderTag}\n` +
-                `┃ 📍 Chat: ${isGroup ? 'Group' : 'Personal'}\n` +
-                '┃\n' +
-                '*╰━━━━━━━━━━━━━━━━━━┈⊷*\n\n';
-
-            const mentions = { mentions: [sender] };
-
-            if (
-                content.viewOnceMessage ||
-                content.viewOnceMessageV2 ||
-                content.viewOnceMessageV2Extension
-            ) {
-                console.log(
-                    'ℹ️ AntiDelete: View-once message skipped.'
-                );
-                continue;
-            }
-
-            const mediaTypes = [
-                'imageMessage',
-                'videoMessage',
-                'audioMessage',
-                'documentMessage',
-                'stickerMessage'
-            ];
-
-            if (mediaTypes.includes(type)) {
-                const buffer = await downloadMediaMessage(
-                    original,
-                    'buffer',
-                    {},
-                    {
-                        logger: P({ level: 'silent' }),
-                        reuploadRequest: (message) =>
-                            nikka.updateMediaMessage(message)
-                    }
-                );
-
-                if (!buffer?.length) {
-                    throw new Error(
-                        'Media download returned empty buffer'
-                    );
-                }
-
-                const media = content[type];
-                let output;
-
-                switch (type) {
-                    case 'imageMessage':
-                        output = {
-                            image: buffer,
-                            caption: header + (media.caption || ''),
-                            ...mentions
-                        };
-                        break;
-
-                    case 'videoMessage':
-                        output = {
-                            video: buffer,
-                            caption: header + (media.caption || ''),
-                            ...mentions
-                        };
-                        break;
-
-                    case 'audioMessage':
-                        await nikka.sendMessage(chat, {
-                            text: header,
-                            ...mentions
-                        });
-
-                        output = {
-                            audio: buffer,
-                            mimetype: media.mimetype || 'audio/mpeg',
-                            ptt: Boolean(media.ptt)
-                        };
-                        break;
-
-                    case 'documentMessage':
-                        output = {
-                            document: buffer,
-                            mimetype:
-                                media.mimetype ||
-                                'application/octet-stream',
-                            fileName: media.fileName || 'deleted-file',
-                            caption: header + (media.caption || ''),
-                            ...mentions
-                        };
-                        break;
-
-                    case 'stickerMessage':
-                        await nikka.sendMessage(chat, {
-                            text: header,
-                            ...mentions
-                        });
-
-                        output = { sticker: buffer };
-                        break;
-                }
-
-                await nikka.sendMessage(chat, output);
-
-            } else {
-                const textContent =
-                    content.conversation ||
-                    content.extendedTextMessage?.text ||
-                    content.imageMessage?.caption ||
-                    content.videoMessage?.caption ||
-                    content.documentMessage?.caption ||
-                    content.buttonsResponseMessage?.selectedDisplayText ||
-                    content.listResponseMessage?.title ||
-                    content.templateButtonReplyMessage?.selectedDisplayText ||
-                    '';
-
-                if (!textContent) continue;
-
-                await nikka.sendMessage(chat, {
-                    text: header + textContent,
-                    ...mentions
-                });
-            }
-
-            console.log(
-                `✅ AntiDelete recovered: ${deletedKey.id}`
-            );
-
-        } catch (error) {
-            console.error(
-                '[ANTIDELETE RECOVERY ERROR]',
-                error
-            );
-        }
-    }
-}
-
-// =====================================
 // WHATSAPP CONNECTION
-// =====================================
-
 async function connectToWA() {
     if (isConnecting) return;
 
@@ -510,18 +220,10 @@ async function connectToWA() {
             keepAliveIntervalMs: 25000
         });
 
-        activeSocket = nikka;
+        nikka.ev.on('creds.update', saveCreds);
 
-        // =====================================
-        // CONNECTION UPDATE
-        // =====================================
-
-        nikka.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect, qr } = update;
-
-            if (qr) {
-                console.log('⚠️ QR received.');
-            }
+        nikka.ev.on('connection.update', async update => {
+            const { connection, lastDisconnect } = update;
 
             if (connection === 'connecting') {
                 console.log('⏳ NIKKA X MD Connecting...');
@@ -535,10 +237,6 @@ async function connectToWA() {
 
                 console.log('❌ WhatsApp Connection Closed!');
                 console.log('Status Code:', statusCode);
-
-                if (activeSocket === nikka) {
-                    activeSocket = null;
-                }
 
                 if (
                     statusCode === DisconnectReason.loggedOut ||
@@ -575,8 +273,7 @@ async function connectToWA() {
                     await nikka.sendMessage(
                         ownerNumber + '@s.whatsapp.net',
                         {
-                            image: { url: config.ALIVE_IMG },
-                            caption: up
+                            text: up
                         }
                     ).catch(error => {
                         console.log(
@@ -590,258 +287,215 @@ async function connectToWA() {
             }
         });
 
-        // SAVE SESSION
-        nikka.ev.on('creds.update', saveCreds);
-
-        // ANTIDELETE EVENT
-        nikka.ev.on('messages.update', async (updates) => {
-            await handleAntiDelete(nikka, updates);
-        });
-
-        // =====================================
         // MESSAGE HANDLER
-        // =====================================
-
         nikka.ev.on('messages.upsert', async ({ messages }) => {
-
-            // Cache incoming messages
-            for (const msg of messages) {
-                cacheAntiDeleteMessage(msg);
-
-                if (msg.messageStubType === 68) {
-                    await nikka.sendMessageAck(msg.key).catch(() => {});
-                }
-            }
-
             for (const mek of messages) {
-                if (!mek?.message) continue;
+                try {
+                    if (!mek?.message) continue;
 
-                if (
-                    getContentType(mek.message) === 'ephemeralMessage'
-                ) {
-                    mek.message = mek.message.ephemeralMessage.message;
-                }
+                    if (
+                        getContentType(mek.message) === 'ephemeralMessage'
+                    ) {
+                        mek.message = mek.message.ephemeralMessage.message;
+                    }
 
-                if (mek.key.remoteJid === 'status@broadcast') continue;
+                    const from = mek.key.remoteJid;
 
-                const m = sms(nikka, mek);
-                const type = getContentType(mek.message);
-                const from = mek.key.remoteJid;
+                    if (!from || from === 'status@broadcast') continue;
 
-                const body =
-                    type === 'conversation'
-                        ? mek.message.conversation
-                        : mek.message[type]?.text ||
-                          mek.message[type]?.caption ||
-                          '';
+                    const m = sms(nikka, mek);
+                    const type = getContentType(mek.message);
 
-                const isCmd = body.startsWith(prefix);
+                    const body =
+                        type === 'conversation'
+                            ? mek.message.conversation
+                            : mek.message[type]?.text ||
+                              mek.message[type]?.caption ||
+                              '';
 
-                const commandName = isCmd
-                    ? body.slice(prefix.length)
-                        .trim()
-                        .split(' ')[0]
-                        .toLowerCase()
-                    : '';
+                    const isCmd = body.startsWith(prefix);
 
-                const args = body.trim().split(/ +/).slice(1);
-                const q = args.join(' ');
+                    const commandName = isCmd
+                        ? body.slice(prefix.length)
+                            .trim()
+                            .split(' ')[0]
+                            .toLowerCase()
+                        : '';
 
-                const sender = mek.key.fromMe
-                    ? nikka.user.id
-                    : (mek.key.participant || mek.key.remoteJid);
+                    const args = body.trim().split(/ +/).slice(1);
+                    const q = args.join(' ');
 
-                const senderNumber = sender
-                    .split('@')[0]
-                    .split(':')[0];
+                    const sender = mek.key.fromMe
+                        ? nikka.user.id
+                        : (mek.key.participant || mek.key.remoteJid);
 
-                const isGroup = from.endsWith('@g.us');
+                    const senderNumber = sender
+                        .split('@')[0]
+                        .split(':')[0];
 
-                const botNumber = nikka.user.id
-                    .split(':')[0]
-                    .split('@')[0];
+                    const isGroup = from.endsWith('@g.us');
 
-                const pushname = mek.pushName || 'User';
+                    const botNumber = nikka.user.id
+                        .split(':')[0]
+                        .split('@')[0];
 
-                const isMe = botNumber === senderNumber;
+                    const pushname = mek.pushName || 'User';
 
-                const isOwner =
-                    ownerNumber === senderNumber || isMe;
+                    const isMe = botNumber === senderNumber;
 
-                const botNumber2 = await jidNormalizedUser(
-                    nikka.user.id
-                );
+                    const isOwner =
+                        ownerNumber === senderNumber || isMe;
 
-                const groupMetadata = isGroup
-                    ? await nikka.groupMetadata(from).catch(() => null)
-                    : null;
+                    const botNumber2 = jidNormalizedUser(nikka.user.id);
 
-                const groupName = isGroup
-                    ? groupMetadata?.subject || ''
-                    : '';
+                    const groupMetadata = isGroup
+                        ? await nikka.groupMetadata(from).catch(() => null)
+                        : null;
 
-                const participants = isGroup
-                    ? groupMetadata?.participants || []
-                    : [];
+                    const groupName = isGroup
+                        ? groupMetadata?.subject || ''
+                        : '';
 
-                const groupAdmins = isGroup
-                    ? await getGroupAdmins(participants)
-                    : [];
+                    const participants = isGroup
+                        ? groupMetadata?.participants || []
+                        : [];
 
-                const isBotAdmins = isGroup
-                    ? groupAdmins.includes(botNumber2)
-                    : false;
+                    const groupAdmins = isGroup
+                        ? await getGroupAdmins(participants)
+                        : [];
 
-                const isAdmins = isGroup
-                    ? groupAdmins.includes(sender)
-                    : false;
+                    const isBotAdmins = isGroup
+                        ? groupAdmins.includes(botNumber2)
+                        : false;
 
-                const reply = (text) => nikka.sendMessage(
-                    from,
-                    { text },
-                    { quoted: mek }
-                );
+                    const isAdmins = isGroup
+                        ? groupAdmins.includes(sender)
+                        : false;
 
-                // =====================================
-                // COMMAND HANDLER
-                // =====================================
-
-                if (isCmd) {
-                    const cmd = commands.find((c) =>
-                        c.pattern === commandName ||
-                        (c.alias && c.alias.includes(commandName))
+                    const reply = text => nikka.sendMessage(
+                        from,
+                        { text },
+                        { quoted: mek }
                     );
 
-                    if (cmd) {
+                    // COMMAND HANDLER
+                    if (isCmd) {
+                        const cmd = commands.find(c =>
+                            c.pattern === commandName ||
+                            (c.alias && c.alias.includes(commandName))
+                        );
 
+                        if (cmd) {
+                            if (
+                                cmd.category === 'owner' &&
+                                !isOwner
+                            ) continue;
+
+                            if (cmd.fromMe && !isOwner) continue;
+
+                            if (cmd.react) {
+                                await nikka.sendMessage(from, {
+                                    react: {
+                                        text: cmd.react,
+                                        key: mek.key
+                                    }
+                                }).catch(() => {});
+                            }
+
+                            try {
+                                await cmd.function(
+                                    nikka,
+                                    mek,
+                                    m,
+                                    {
+                                        from,
+                                        quoted: mek,
+                                        body,
+                                        isCmd,
+                                        command: commandName,
+                                        args,
+                                        q,
+                                        isGroup,
+                                        sender,
+                                        senderNumber,
+                                        botNumber2,
+                                        botNumber,
+                                        pushname,
+                                        isMe,
+                                        isOwner,
+                                        groupMetadata,
+                                        groupName,
+                                        participants,
+                                        groupAdmins,
+                                        isBotAdmins,
+                                        isAdmins,
+                                        reply
+                                    }
+                                );
+                            } catch (error) {
+                                console.error('[PLUGIN ERROR]', error);
+
+                                await reply(
+                                    '❌ Command Error: ' + error.message
+                                );
+                            }
+                        }
+                    }
+
+                    // REPLY HANDLERS
+                    for (const handler of replyHandlers) {
                         if (
-                            cmd.category === 'owner' &&
-                            !isOwner
+                            handler.filter(body, {
+                                sender,
+                                message: mek
+                            })
                         ) {
-                            continue;
-                        }
+                            try {
+                                await handler.function(
+                                    nikka,
+                                    mek,
+                                    m,
+                                    {
+                                        from,
+                                        quoted: mek,
+                                        body,
+                                        sender,
+                                        reply
+                                    }
+                                );
 
-                        if (cmd.fromMe && !isOwner) {
-                            continue;
-                        }
-
-                        if (cmd.react) {
-                            await nikka.sendMessage(from, {
-                                react: {
-                                    text: cmd.react,
-                                    key: mek.key
-                                }
-                            }).catch(() => {});
-                        }
-
-                        try {
-                            await cmd.function(
-                                nikka,
-                                mek,
-                                m,
-                                {
-                                    from,
-                                    quoted: mek,
-                                    body,
-                                    isCmd,
-                                    command: commandName,
-                                    args,
-                                    q,
-                                    isGroup,
-                                    sender,
-                                    senderNumber,
-                                    botNumber2,
-                                    botNumber,
-                                    pushname,
-                                    isMe,
-                                    isOwner,
-                                    groupMetadata,
-                                    groupName,
-                                    participants,
-                                    groupAdmins,
-                                    isBotAdmins,
-                                    isAdmins,
-                                    reply
-                                }
-                            );
-                        } catch (error) {
-                            console.error(
-                                '[PLUGIN ERROR]',
-                                error
-                            );
-
-                            await reply(
-                                '❌ Command Error: ' + error.message
-                            );
+                                break;
+                            } catch (error) {
+                                console.log('Reply Handler Error:', error);
+                            }
                         }
                     }
-                }
 
-                // =====================================
-                // REPLY HANDLERS
-                // =====================================
-
-                for (const handler of replyHandlers) {
-                    if (
-                        handler.filter(body, {
-                            sender,
-                            message: mek
-                        })
-                    ) {
-                        try {
-                            await handler.function(
-                                nikka,
-                                mek,
-                                m,
-                                {
-                                    from,
-                                    quoted: mek,
-                                    body,
-                                    sender,
-                                    reply
-                                }
-                            );
-
-                            break;
-                        } catch (error) {
-                            console.log(
-                                'Reply Handler Error:',
-                                error
-                            );
-                        }
-                    }
+                } catch (error) {
+                    console.error('[MESSAGE HANDLER ERROR]', error);
                 }
             }
         });
 
     } catch (error) {
         isConnecting = false;
-        console.error(
-            '❌ NIKKA X MD Connection Error:',
-            error
-        );
+
+        console.error('❌ NIKKA X MD Connection Error:', error);
+
         scheduleReconnect();
     }
 }
 
-// =====================================
 // EXPRESS SERVER
-// =====================================
-
 app.get('/', (req, res) => {
     res.send('Hey, NIKKA X MD started ✅');
 });
 
 app.listen(port, () => {
-    console.log(
-        `🌐 NIKKA X MD Server listening on port ${port}`
-    );
+    console.log(`🌐 NIKKA X MD Server listening on port ${port}`);
 });
 
-// =====================================
 // START BOT
-// =====================================
-
 async function ensureSessionFile() {
     try {
         if (!hasValidSession()) {
