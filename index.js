@@ -747,6 +747,8 @@ async function connectToWA() {
                 );
 
                 // =====================================
+                
+                // =====================================
                 // COMMAND HANDLER
                 // =====================================
 
@@ -757,6 +759,19 @@ async function connectToWA() {
                     );
 
                     if (cmd) {
+
+                        // OWNER SECURITY
+                        if (
+                            cmd.category === 'owner' &&
+                            !isOwner
+                        ) {
+                            continue;
+                        }
+
+                        if (cmd.fromMe && !isOwner) {
+                            continue;
+                        }
+
                         if (cmd.react) {
                             await nikka.sendMessage(from, {
                                 react: {
@@ -797,13 +812,18 @@ async function connectToWA() {
                                 }
                             );
                         } catch (error) {
-                            console.error('[PLUGIN ERROR]', error);
+                            console.error(
+                                '[PLUGIN ERROR]',
+                                error
+                            );
+
                             await reply(
                                 '❌ Command Error: ' + error.message
                             );
                         }
                     }
                 }
+
 
                 // =====================================
                 // REPLY HANDLERS
