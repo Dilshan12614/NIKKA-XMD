@@ -11,7 +11,6 @@ const {
 const fs = require('fs');
 const P = require('pino');
 const express = require('express');
-const axios = require('axios');
 const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
@@ -20,20 +19,8 @@ const { File } = require('megajs');
 
 const config = require('./config');
 
-const { sms, downloadMediaMessage } = require('./lib/msg');
-
-const {
-    getBuffer,
-    getGroupAdmins,
-    getRandom,
-    h2k,
-    isUrl,
-    Json,
-    runtime,
-    sleep,
-    fetchJson
-} = require('./lib/functions');
-
+const { sms } = require('./lib/msg');
+const { getGroupAdmins } = require('./lib/functions');
 const { commands, replyHandlers } = require('./command');
 
 const app = express();
@@ -54,6 +41,7 @@ let isConnecting = false;
 let pluginsLoaded = false;
 let reconnectTimer = null;
 let pairingRequested = false;
+let pairNumber = '';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -71,14 +59,14 @@ async function ensureSessionFile() {
             console.log('✅ Existing session found.');
             return true;
         } catch {
-            console.log('⚠️ Existing creds.json is invalid.');
+            console.log('⚠️ Invalid existing creds.json.');
         }
     }
 
     const sessionID = config.SESSION_ID || process.env.SESSION_ID;
 
     if (!sessionID) {
-        console.error('❌ SESSION_ID is missing.');
+        console.error('❌ SESSION_ID missing.');
         return false;
     }
 
@@ -97,10 +85,12 @@ async function ensureSessionFile() {
         const match = clean.match(/^([^#]+)#(.+)$/);
 
         if (!match) {
-            throw new Error('Invalid MEGA session format.');
+            throw new Error('Invalid MEGA URL format.');
         }
 
-        const megaURL = `https://mega.nz/file/${match[1]}#${match[2]}`;
+        const megaURL =
+            `https://mega.nz/file/${match[1]}#${match[2]}`;
+
         const filer = File.fromURL(megaURL);
 
         const data = await new Promise((resolve, reject) => {
@@ -125,7 +115,7 @@ async function ensureSessionFile() {
         fs.writeFileSync(zipPath, data);
 
         if (data[0] === 0x50 && data[1] === 0x4B) {
-            console.log('📦 ZIP session detected. Extracting...');
+            console.log('📦 ZIP session detected.');
 
             execFileSync(
                 'unzip',
@@ -160,19 +150,15 @@ async function ensureSessionFile() {
             const foundCreds = findCreds(extractDir);
 
             if (!foundCreds) {
-                throw new Error('creds.json not found inside ZIP session.');
+                throw new Error('creds.json not found in ZIP.');
             }
-
-            const sessionRoot = path.dirname(foundCreds);
 
             JSON.parse(fs.readFileSync(foundCreds, 'utf8'));
 
-            fs.cpSync(sessionRoot, authDir, {
+            fs.cpSync(path.dirname(foundCreds), authDir, {
                 recursive: true,
                 force: true
             });
-
-            console.log('✅ ZIP session extracted successfully!');
 
         } else {
             const parsed = JSON.parse(data.toString('utf8'));
@@ -181,18 +167,15 @@ async function ensureSessionFile() {
                 credsPath,
                 JSON.stringify(parsed, null, 2)
             );
-
-            console.log('✅ JSON session restored.');
         }
 
         if (!fs.existsSync(credsPath)) {
-            throw new Error('Session restore failed: creds.json missing.');
+            throw new Error('creds.json missing after restore.');
         }
 
         JSON.parse(fs.readFileSync(credsPath, 'utf8'));
 
-        console.log('✅ MEGA SESSION RESTORED SUCCESSFULLY!');
-
+        console.log('✅ MEGA SESSION RESTORED!');
         return true;
 
     } catch (error) {
@@ -261,12 +244,14 @@ async function connectToWA() {
     isConnecting = true;
 
     try {
-        console.log('Connecting DANUWA-MD 🧬...');
+        console.log('🧬 Connecting DANUWA-MD...');
 
         const { state, saveCreds } =
             await useMultiFileAuthState(authDir);
 
         const { version } = await fetchLatestBaileysVersion();
+
+        console.log('📦 Baileys version:', version.join('.'));
 
         socket = makeWASocket({
             logger: P({ level: 'silent' }),
@@ -274,34 +259,33 @@ async function connectToWA() {
             browser: Browsers.macOS('Firefox'),
             auth: state,
             version,
-            syncFullHistory: true,
+            syncFullHistory: false,
             markOnlineOnConnect: true,
-            generateHighQualityLinkPreview: true
+            generateHighQualityLinkPreview: true,
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 60000,
+            keepAliveIntervalMs: 25000
         });
+
+        socket.ev.on('creds.update', saveCreds);
 
         // PAIR CODE
 
-        if (!state.creds.registered && pairingRequested) {
-            const number = process.env.PAIR_NUMBER;
+        if (!state.creds.registered && pairingRequested && pairNumber) {
+            await delay(3000);
 
-            if (number) {
-                await delay(3000);
+            try {
+                const code = await socket.requestPairingCode(pairNumber);
 
-                try {
-                    const code = await socket.requestPairingCode(
-                        number.replace(/\D/g, '')
-                    );
+                console.log('================================');
+                console.log('📱 WHATSAPP PAIR CODE');
+                console.log(code);
+                console.log('================================');
 
-                    console.log('================================');
-                    console.log('📱 WHATSAPP PAIR CODE');
-                    console.log(code);
-                    console.log('================================');
+                pairingRequested = false;
 
-                } catch (error) {
-                    console.error('❌ Pair code error:', error.message);
-                }
-            } else {
-                console.log('⚠️ PAIR_NUMBER secret is missing.');
+            } catch (error) {
+                console.error('❌ PAIR ERROR:', error.message);
             }
         }
 
@@ -311,7 +295,7 @@ async function connectToWA() {
             const { connection, lastDisconnect, qr } = update;
 
             if (qr) {
-                console.log('📱 SCAN WHATSAPP QR CODE BELOW');
+                console.log('📱 SCAN WHATSAPP QR CODE');
                 qrcode.generate(qr, { small: true });
             }
 
@@ -331,7 +315,7 @@ async function connectToWA() {
                     await socket.sendMessage(
                         ownerNumber[0] + '@s.whatsapp.net',
                         {
-                            text: `DANUWA-MD connected ✅\n\nPREFIX: ${prefix}`
+                            text: `DANUWA-MD connected ✅\nPREFIX: ${prefix}`
                         }
                     );
                 } catch (error) {
@@ -342,27 +326,36 @@ async function connectToWA() {
             if (connection === 'close') {
                 isConnecting = false;
 
-                const statusCode =
-                    lastDisconnect?.error?.output?.statusCode;
+                const error = lastDisconnect?.error;
+                const statusCode = error?.output?.statusCode;
+
+                console.error('❌ CONNECTION CLOSED');
+                console.error('STATUS CODE:', statusCode);
+                console.error('ERROR MESSAGE:', error?.message || 'Unknown error');
 
                 if (statusCode === DisconnectReason.loggedOut) {
-                    console.log('❌ WhatsApp logged out. Authentication required.');
+                    console.log('❌ Session logged out. New authentication required.');
                     return;
                 }
 
-                console.log('🔄 Connection closed. Reconnecting...');
+                if (
+                    statusCode === DisconnectReason.badSession
+                ) {
+                    console.log('❌ Invalid session. Re-authentication required.');
+                    return;
+                }
 
-                if (reconnectTimer) clearTimeout(reconnectTimer);
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                }
+
+                console.log('🔄 Reconnecting in 10 seconds...');
 
                 reconnectTimer = setTimeout(() => {
                     connectToWA();
-                }, 5000);
+                }, 10000);
             }
         });
-
-        // SAVE CREDS
-
-        socket.ev.on('creds.update', saveCreds);
 
         // MESSAGE HANDLER
 
@@ -393,7 +386,10 @@ async function connectToWA() {
                     const isCmd = body.startsWith(prefix);
 
                     const commandName = isCmd
-                        ? body.slice(prefix.length).trim().split(/\s+/)[0].toLowerCase()
+                        ? body.slice(prefix.length)
+                            .trim()
+                            .split(/\s+/)[0]
+                            .toLowerCase()
                         : '';
 
                     const args = body.trim().split(/\s+/).slice(1);
@@ -408,7 +404,6 @@ async function connectToWA() {
 
                     const isGroup = from.endsWith('@g.us');
                     const botNumber = socket.user.id.split(':')[0];
-
                     const pushname = mek.pushName || 'User';
                     const isMe = botNumber === senderNumber;
 
@@ -541,9 +536,45 @@ async function connectToWA() {
 
         reconnectTimer = setTimeout(() => {
             connectToWA();
-        }, 5000);
+        }, 10000);
     }
 }
+
+
+// ======================================
+// PAIR ROUTE
+// ======================================
+
+app.get('/pair', async (req, res) => {
+    const number = String(req.query.number || '').replace(/\D/g, '');
+
+    if (!number) {
+        return res.status(400).send('Add phone number: /pair?number=947XXXXXXXX');
+    }
+
+    if (number.length < 10 || number.length > 15) {
+        return res.status(400).send('Invalid phone number.');
+    }
+
+    if (socket?.user) {
+        return res.status(400).send('Bot is already connected.');
+    }
+
+    if (isConnecting) {
+        return res.status(409).send('Connection is already starting. Try again shortly.');
+    }
+
+    if (fs.existsSync(credsPath)) {
+        return res.status(409).send('Existing session found. Remove old session before pairing a new number.');
+    }
+
+    pairingRequested = true;
+    pairNumber = number;
+
+    res.send('Pair code requested. Check GitHub Actions logs.');
+
+    connectToWA();
+});
 
 
 // ======================================
@@ -551,13 +582,14 @@ async function connectToWA() {
 // ======================================
 
 app.get('/', (req, res) => {
-    res.send('Hey, DANUWA-MD started ✅');
+    res.send('DANUWA-MD is running ✅');
 });
 
 app.get('/health', (req, res) => {
     res.json({
         status: 'running',
         bot: 'DANUWA-MD',
+        connected: Boolean(socket?.user),
         plugins: pluginsLoaded,
         commands: commands.length
     });
@@ -569,7 +601,7 @@ app.get('/health', (req, res) => {
 // ======================================
 
 app.listen(port, () => {
-    console.log(`Server listening on http://localhost:${port}`);
+    console.log(`🌐 Server listening on port ${port}`);
 });
 
 (async () => {
@@ -578,6 +610,6 @@ app.listen(port, () => {
     if (ready) {
         await connectToWA();
     } else {
-        console.log('❌ Bot not connected. Check your SESSION_ID.');
+        console.log('❌ Bot not connected. Check SESSION_ID.');
     }
 })();
