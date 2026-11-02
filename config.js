@@ -33,7 +33,7 @@ module.exports = {
 
     BOT_OWNER:
         process.env.BOT_OWNER ||
-        'YOUR_OWNER_NUMBER',
+        '94772194789',
 
     // =====================================
     // SETTINGS
