@@ -20,7 +20,6 @@ const config = require('./config');
 const { sms } = require('./lib/msg');
 const { getGroupAdmins } = require('./lib/functions');
 const { commands, replyHandlers } = require('./command');
-const { getSettings } = require('./lib/botsettings');
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -261,7 +260,7 @@ function loadPlugins() {
     }
 
     pluginsLoaded = true;
-    console.log('✅ DANUWA-MD Plugins Loaded!');
+    console.log('✅ NIKKA X MD Plugins Loaded!');
 }
 
 // =====================================
@@ -340,7 +339,7 @@ async function handleAntiDelete(nikka, updates) {
             const senderTag = sender.split('@')[0];
 
             const header =
-                '*╭━━━〔 🛡️ DANUWA-MD 〕━━━┈⊷*\n' +
+                '*╭━━━〔 🛡️ NIKKA X MD 〕━━━┈⊷*\n' +
                 '┃\n' +
                 `┃ 👤 Sender: @${senderTag}\n` +
                 `┃ 📍 Chat: ${isGroup ? 'Group' : 'Personal'}\n` +
@@ -349,7 +348,6 @@ async function handleAntiDelete(nikka, updates) {
 
             const mentions = { mentions: [sender] };
 
-            // Skip view-once messages
             if (
                 content.viewOnceMessage ||
                 content.viewOnceMessageV2 ||
@@ -486,7 +484,7 @@ async function connectToWA() {
 
     isConnecting = true;
 
-    console.log('Connecting DANUWA-MD 🧬...');
+    console.log('Connecting NIKKA X MD 🧬...');
 
     try {
         const { state, saveCreds } =
@@ -526,7 +524,7 @@ async function connectToWA() {
             }
 
             if (connection === 'connecting') {
-                console.log('⏳ DANUWA-MD Connecting...');
+                console.log('⏳ NIKKA X MD Connecting...');
             }
 
             if (connection === 'close') {
@@ -563,11 +561,11 @@ async function connectToWA() {
                 }
 
                 console.log('================================');
-                console.log('✅ DANUWA-MD CONNECTED!');
+                console.log('✅ NIKKA X MD CONNECTED!');
                 console.log('================================');
 
                 const up =
-                    '╭━━━〔 DANUWA-MD 〕━━━┈⊷\n' +
+                    '╭━━━〔 NIKKA X MD 〕━━━┈⊷\n' +
                     '┃ 🟢 BOT CONNECTED\n' +
                     `┃ PREFIX : ${prefix}\n` +
                     '┃ STATUS : ONLINE\n' +
@@ -586,21 +584,6 @@ async function connectToWA() {
                             error.message
                         );
                     });
-                }
-
-                // ALWAYS ONLINE
-                const botSettings = getSettings();
-
-                if (botSettings.alwaysonline) {
-                    try {
-                        await nikka.sendPresenceUpdate('available');
-                        console.log('🟢 Always Online Enabled');
-                    } catch (error) {
-                        console.error(
-                            '[ALWAYS ONLINE ERROR]',
-                            error
-                        );
-                    }
                 }
 
                 loadPlugins();
@@ -644,33 +627,6 @@ async function connectToWA() {
                 const m = sms(nikka, mek);
                 const type = getContentType(mek.message);
                 const from = mek.key.remoteJid;
-
-                // =====================================
-                // AUTO RECORDING / AUTO TYPING
-                // =====================================
-
-                if (!mek.key.fromMe) {
-                    const currentSettings = getSettings();
-
-                    try {
-                        if (currentSettings.autorecord) {
-                            await nikka.sendPresenceUpdate(
-                                'recording',
-                                from
-                            );
-                        } else if (currentSettings.autotyping) {
-                            await nikka.sendPresenceUpdate(
-                                'composing',
-                                from
-                            );
-                        }
-                    } catch (error) {
-                        console.error(
-                            '[AUTO PRESENCE ERROR]',
-                            error
-                        );
-                    }
-                }
 
                 const body =
                     type === 'conversation'
@@ -747,8 +703,6 @@ async function connectToWA() {
                 );
 
                 // =====================================
-                
-                // =====================================
                 // COMMAND HANDLER
                 // =====================================
 
@@ -760,7 +714,6 @@ async function connectToWA() {
 
                     if (cmd) {
 
-                        // OWNER SECURITY
                         if (
                             cmd.category === 'owner' &&
                             !isOwner
@@ -824,7 +777,6 @@ async function connectToWA() {
                     }
                 }
 
-
                 // =====================================
                 // REPLY HANDLERS
                 // =====================================
@@ -865,7 +817,7 @@ async function connectToWA() {
     } catch (error) {
         isConnecting = false;
         console.error(
-            '❌ DANUWA-MD Connection Error:',
+            '❌ NIKKA X MD Connection Error:',
             error
         );
         scheduleReconnect();
@@ -877,12 +829,12 @@ async function connectToWA() {
 // =====================================
 
 app.get('/', (req, res) => {
-    res.send('Hey, DANUWA-MD started ✅');
+    res.send('Hey, NIKKA X MD started ✅');
 });
 
 app.listen(port, () => {
     console.log(
-        `🌐 DANUWA-MD Server listening on port ${port}`
+        `🌐 NIKKA X MD Server listening on port ${port}`
     );
 });
 
@@ -893,7 +845,7 @@ app.listen(port, () => {
 async function ensureSessionFile() {
     try {
         if (!hasValidSession()) {
-            console.log('🔄 Downloading DANUWA-MD Session...');
+            console.log('🔄 Downloading NIKKA X MD Session...');
 
             fs.rmSync(authFolder, {
                 recursive: true,
@@ -905,7 +857,7 @@ async function ensureSessionFile() {
 
             extractSessionZip(buffer);
 
-            console.log('✅ DANUWA-MD Session Ready!');
+            console.log('✅ NIKKA X MD Session Ready!');
         } else {
             console.log('✅ Existing valid session found!');
         }
